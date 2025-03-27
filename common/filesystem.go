@@ -54,12 +54,10 @@ var skipExtensions = map[string]string{
 	".bak":      "bak",
 	".wav":      "wav",
 	".xmp":      "xmp",
-	// ".nef":  "nef",
-	// ".mp4":  "mp4",
-	// ".mov":  "mov",
-	// ".mjpg": "mjpg",
-	// ".pcx":  "pcx",
-	// ".wmv":  "wmv",
+	".rtf":      "rtf",
+	".json":     "json",
+	// consider re-enabling once we fix other issues
+	"mjpg": "mjpg",
 }
 
 var imageSignatures = map[string]string{
@@ -77,7 +75,8 @@ var imageSignatures = map[string]string{
 	"\x49\x44\x33":                     "audio/mpeg",      // MP3
 	"\x00\x00\x00\x28ftypheic":         "image/heic",      // HEIC
 	"\x89\x50\x4E\x47\x0D\x0A\x1A\x0A": "image/png",       // PNG or NEF WTF???
-	"\x0D\x0A\x0D\x0A\x2D\x2D\x6D\x79\x62\x6F\x75\x6E\x64\x61\x72\x79": "video/mjpeg", // MJPEG
+	// consider re-enabling once we fix other issues
+	//"\x0D\x0A\x0D\x0A\x2D\x2D\x6D\x79\x62\x6F\x75\x6E\x64\x61\x72\x79": "video/mjpeg", // MJPEG
 }
 
 func NewFileSystem(basePath string) (*FileSystem, error) {

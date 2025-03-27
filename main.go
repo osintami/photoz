@@ -15,11 +15,10 @@ import (
 func main() {
 
 	// handle command line arguments
-	var basePath string
-	var outPath string
+	var inPath, outPath string
 	var clean, debug, stats bool
 
-	flag.StringVar(&basePath, "path", "backups", "starting point")
+	flag.StringVar(&inPath, "in", "backups", "starting point")
 	flag.StringVar(&outPath, "out", "originals", "output path")
 	flag.BoolVar(&clean, "clean", false, "clean logs and db, then run normally")
 	flag.BoolVar(&debug, "debug", false, "trace level logging")
@@ -28,71 +27,85 @@ func main() {
 	flag.Parse()
 
 	// initialize logging interface
-	level := "INFO"
+	level := "ERROR"
 	if debug {
 		level = "DEBUG"
 	}
 	log.InitLogger(".", "photoz.log", level, false)
 
+	dbPath := outPath + "/" + "photoz.db"
+
 	// initialize file system interface
-	fs, err := common.NewFileSystem(basePath)
+	fs, err := common.NewFileSystem(inPath)
 	if err != nil {
-		log.Error().Err(err).Str("photoz", "filesystem").Msg("initialize filesystem failed")
-		log.Fatal()
+		log.Fatal().Err(err).Str("photoz", inPath).Msg("initialize filesystem failed")
 		return
 	}
 
+	// check to see if output directory exists
+	if _, err := os.Stat(outPath); os.IsNotExist(err) {
+		log.Fatal().Str("out", outPath).Msg("does not exist")
+		return
+	}
+
+	// only print database status
 	if stats {
-		db, err := common.NewPersistentCache("photoz.db")
+		db, err := common.NewPersistentCache(dbPath)
 		if err != nil && !os.IsNotExist(err) {
-			log.Error().Err(err).Str("photoz", "db").Msg("initialize db failed")
-			log.Fatal()
+			log.Fatal().Err(err).Str("photoz", dbPath).Msg("initialize db failed")
 			return
 		}
-		dbStats(db, basePath, outPath, 0)
+		dbStats(db, inPath, outPath, 0)
 		return
 	}
 
+	// destroy existing log and picture database
 	if clean {
 		err = fs.DeleteFile("photoz.log")
 		if err != nil {
 			log.Error().Err(err).Str("photoz", "filesystem").Str("file", "photoz.log").Msg("cleanup failure")
 		}
 		log.InitLogger(".", "photoz.log", level, false)
-		fs.DeleteFile("photoz.db")
+		fs.DeleteFile(dbPath)
 		if err != nil {
-			log.Error().Err(err).Str("photoz", "filesystem").Str("file", "photoz.db").Msg("cleanup failure")
+			log.Error().Err(err).Str("photoz", "filesystem").Str("file", dbPath).Msg("cleanup failure")
 		}
 	}
 
 	// initialize duplicates DB
-	db, err := common.NewPersistentCache("photoz.db")
+	db, err := common.NewPersistentCache(dbPath)
 	if err != nil && !os.IsNotExist(err) {
 		log.Error().Err(err).Str("photoz", "db").Msg("initialize db failed")
 		log.Fatal()
 		return
 	}
 
-	if outPath != "" {
-		// TODO: create if necessary, otherwise use ./originals
-	}
-
 	fileCount := 0
 
 	// scan recursively for photos
-	err = filepath.Walk(basePath, func(filePath string, info os.FileInfo, err error) error {
+	err = filepath.Walk(inPath, func(filePath string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if !info.IsDir() {
+		if fi.IsDir() {
+			// filter known junk paths
+			if fi.Name() == "Thumbs" || fi.Name() == "resources" {
+				return filepath.SkipDir
+			} else {
+				return nil
+			}
+
+		} else {
 			fileCount += 1
+			// ignore by name (ie. "._*")
 			toIgnoreByName, _ := fs.IgnoreByName(filePath)
 			if toIgnoreByName {
 				log.Debug().Str("photoz", "file").Str("file", filePath).Msg("skip by name")
 				return nil
 			}
 
+			// ignore by file extension (ie. ".html")
 			toIgnoreByExt, extension := fs.IgnoreByExtension(filePath)
 			if toIgnoreByExt {
 				log.Debug().Str("photoz", "file").Str("file", filePath).Str("ext", extension).Msg("skip by extension")
@@ -121,25 +134,22 @@ func main() {
 					return nil
 				} else {
 					fi := common.NewImageFileInfo(filePath, mimeType, md5)
+
 					log.Debug().Str("photoz", "file").Str("file", filePath).Msg("original")
+
 					outFile := ""
 					if fi.IsJPEG() || fi.IsNEF() || fi.IsHEIC() {
 						// parse the EXIF data
 						err := fi.GetJpegCreatedAt()
 						if err == nil {
-							fi.SetFileName()
 							fi.HasExif = true
-							outFile = fi.FileName
 						} else {
-							if fi.IsNEF() {
-								log.Fatal().Msg("NEF with no EXIF data!!!")
-							}
-							outFile = md5 + "_" + filepath.Base(filePath)
+							fi.HasExif = false
 						}
-					} else {
-						// create output file name using md5+original name
-						outFile = md5 + "_" + filepath.Base(filePath)
 					}
+					// set the output filename
+					fi.SetFileName()
+					outFile = fi.FileName
 
 					// sync object changes back to the db
 					db.Set(md5, fi, -1)
@@ -155,8 +165,6 @@ func main() {
 				return nil
 			}
 
-		} else {
-			log.Debug().Str("photoz", "file").Str("file", filePath).Msg("unrecognized file")
 		}
 
 		return nil
@@ -171,7 +179,7 @@ func main() {
 	if err != nil {
 		log.Error().Err(err).Str("photoz", "db").Msg("persisting duplicate photo db")
 	}
-	dbStats(db, basePath, outPath, fileCount)
+	dbStats(db, inPath, outPath, fileCount)
 
 }
 

@@ -2,6 +2,7 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -33,14 +34,14 @@ func (x *ImageFileInfo) GetJpegCreatedAt() error {
 	// extract the EXIF data from a file
 	rawExif, err := exif.SearchFileAndExtractExif(x.FilePath)
 	if err != nil {
-		log.Error().Err(err).Str("photoz", "exif").Str("file", x.FilePath).Msg("exif extract")
+		log.Warn().Str("path", x.FilePath).Msg("exif data missing")
 		return err
 	}
 
 	// parse the raw EXIF data into a structured format
 	tags, _, err := exif.GetFlatExifData(rawExif, nil)
 	if err != nil {
-		log.Error().Err(err).Str("photoz", "exif").Str("file", x.FilePath).Msg("exif parse")
+		log.Error().Err(err).Str("photoz", "exif").Str("file", x.FilePath).Msg("exif data corrupt")
 		return err
 	}
 
@@ -55,8 +56,21 @@ func (x *ImageFileInfo) GetJpegCreatedAt() error {
 	for _, tag := range tags {
 		// JPEG and NEF tag names for original date
 		if tag.TagName == "DateTimeOriginal" || tag.TagName == "Create Date" {
-			originalTime = fmt.Sprintf("%v", tag.Value)
+			exifTime := tag.Value.(string)
+			// some older JPEGs from my old Nikon 950 camera has junk at the end of the date, not sure why
+			exifTime = strings.Replace(exifTime, "\x00", "", 1)
+
+			if exifTime == "0000:00:00 00:00:00" {
+				log.Warn().Str("path", x.FilePath).Msg("exif data present but empty")
+				return errors.New("exif tag empty")
+			}
+			originalTime = fmt.Sprintf("%v", exifTime)
 		}
+	}
+
+	if originalTime == "" {
+		log.Warn().Str("path", x.FilePath).Msg("no exif error and no time tag found")
+		return errors.New("empty exif data")
 	}
 
 	date, err := time.Parse("2006:01:02 15:04:05", originalTime)
@@ -65,8 +79,7 @@ func (x *ImageFileInfo) GetJpegCreatedAt() error {
 		return err
 	}
 
-	originalTime = date.Format(time.RFC3339)
-
+	originalTime = fmt.Sprintf("%d", date.Unix())
 	x.OriginalDateTime = originalTime
 	return nil
 }
@@ -75,7 +88,7 @@ func (x *ImageFileInfo) SetFileName() {
 	if x.OriginalDateTime != "" {
 		x.FileName = x.OriginalDateTime + "_" + x.MD5 + "_" + filepath.Base(x.FilePath)
 	} else {
-		x.FileName = "unknown" + "_" + x.MD5 + "_" + filepath.Base(x.FilePath)
+		x.FileName = "0000000000" + "_" + x.MD5 + "_" + filepath.Base(x.FilePath)
 	}
 }
 
